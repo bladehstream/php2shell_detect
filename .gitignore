@@ -1,0 +1,28 @@
+# Large local-only evidence: extractable from official sources on demand
+php-src-tarballs/
+pylibs/
+
+# distro validation: keep the original packages + extracted binaries, but
+# exclude the exploded extraction trees (they duplicate the binaries)
+distro-pkgs/deb-8234/
+distro-pkgs/deb-8235/
+distro-pkgs/rpm-8234/
+distro-pkgs/rpm-8235/
+
+# Bulk diffstat runs (tens of MB, low signal); per-file diffs and the
+# changed-file list are the analysis-grade artifacts and stay in the repo
+php-src-diffs/diff-*.stat.txt
+php-src-diffs/zend-*.stat.txt
+php-src-diffs/main-*.stat.txt
+php-src-diffs/sapi-*.stat.txt
+
+# Python
+__pycache__/
+*.pyc
+
+# Scan output
+findings.json
+findings.csv
+audit.json
+audit.csv
+results.json
