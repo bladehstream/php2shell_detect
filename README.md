@@ -208,7 +208,26 @@ paths can be exercised locally.
 Exit codes are automation-friendly: `0` means no affected/unknown result,
 `1` means no configured network endpoint was reachable or the command failed,
 `2` means affected evidence was found, and `3` means PHP evidence requires
-manual provenance review.
+ manual provenance review.
+Command-line usage errors also exit 1, not 2, so that a malformed invocation
+can never be mistaken for an affected finding.
+
+Reference consumers that translate this contract into operationally labelled
+results (PASS / FAIL-INFRA / FAIL-AFFECTED / REVIEW) are included:
+
+    # PowerShell (works with -File, scheduled tasks)
+    .\run_scan.ps1 -Mode scan -Subnet 10.20.0.0/24
+    .\run_scan.ps1 -Mode audit
+    .\run_scan.ps1 -Mode scan -Target 10.0.0.5 -ExtraArgs "--port,8080,--http"
+
+    # bash
+    ./run_scan.sh scan --subnet 10.20.0.0/24
+    ./run_scan.sh audit
+
+Both write timestamped JSON/CSV into --OutputDir or PHP2SHELL_OUTDIR
+(default ./php2shell-results), print a human-readable verdict, emit a JSON
+summary object, and propagate the tool's exit code so CI can gate on it.
+Adapt these rather than re-deriving the mapping in each downstream script.
 
 ## 4. Interpreting results
 

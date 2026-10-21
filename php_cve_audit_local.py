@@ -43,7 +43,7 @@ VERSION_RE = re.compile(r"(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)(?:[-.]?
 
 # Strings present in every fixed build (8.2.35/8.3.36/8.4.27/8.5.12) and absent
 # in every affected build. Derived by diffing the official php-src tarballs;
-# see php2shell-scanner/README.md section "Ground-truth binary signatures".
+# see README.md section "Binary signature verification".
 UBUNTU_FIXED_FLOORS = {
     ("14.04", "5.5"): "5.5.9+dfsg-1ubuntu4.29+esm18",
     ("16.04", "7.0"): "7.0.33-0ubuntu0.16.04.16+esm22",
@@ -362,7 +362,15 @@ def audit_running_processes() -> list:
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description="Local audit for CVE-2026-109618 / CVE-2026-109619")
+    class _Parser(argparse.ArgumentParser):
+        """argparse exits 2 on usage errors, which collides with this tool's
+        exit-code contract (2 = affected evidence found). Route usage errors
+        to exit 1 (command error) instead."""
+        def error(self, message):
+            self.print_usage(sys.stderr)
+            self.exit(1, f"{self.prog}: error: {message}\n")
+
+    parser = _Parser(description="Local audit for CVE-2026-109618 / CVE-2026-109619")
     parser.add_argument("--json", help="write JSON results to this file")
     parser.add_argument("--csv", help="write CSV results to this file")
     args = parser.parse_args(argv)

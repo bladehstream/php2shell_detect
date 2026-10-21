@@ -420,7 +420,15 @@ def expand_targets(args) -> list[str]:
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description="PHP CVE-2026-109618/109619 network scanner")
+    class _Parser(argparse.ArgumentParser):
+        """argparse exits 2 on usage errors, which collides with this tool's
+        exit-code contract (2 = affected evidence found). Route usage errors
+        to exit 1 (command error) instead."""
+        def error(self, message):
+            self.print_usage(sys.stderr)
+            self.exit(1, f"{self.prog}: error: {message}\n")
+
+    parser = _Parser(description="PHP CVE-2026-109618/109619 network scanner")
     parser.add_argument("--subnet", help="CIDR subnet to scan, e.g. 10.0.0.0/24")
     parser.add_argument("--target", help="single host to scan")
     parser.add_argument("--port", type=int, action="append", help="specific port(s) to check; repeatable")

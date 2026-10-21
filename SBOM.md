@@ -12,6 +12,8 @@ Software bill of materials for the tooling in this directory. Generated
 | php2shell-binary-check | php_binary_check.py | Static OOM-patch evidence checker | Python 3 | 1.1 |
 | php2shell-mock-server | test_mock_server.py | Test harness: mock PHP banner server | Python 3 | 1.0 |
 | php2shell-tests | test_suite.py | Positive and negative regression suite | Python 3 | 1.0 |
+| php2shell-runbook-pwsh | run_scan.ps1 | Reference exit-code consumer for scheduled-task/pipeline use | PowerShell 5.1+ | 1.0 |
+| php2shell-runbook-sh | run_scan.sh | Reference exit-code consumer for cron/CI use | POSIX bash | 1.0 |
 | cve-analysis | CVE_ANALYSIS.md | Patch-diff root-cause analysis, signature derivation, distro validation | Markdown | 1.0 |
 
 ## 2. External (third-party) dependencies
@@ -155,12 +157,14 @@ Computed over the final state of each file. Re-verify after any local edit.
 |------|--------------|---------|
 | CVE_ANALYSIS.md | 9576 | bfe70c38efdc8397839be09a904ff554382f01c250e087f83e899dba00f871f7 |
 | php_binary_check.py | 7646 | 4a89739740a363ec839ea1c288632723605e2ff3c9f92da9e13c097e80d4a445 |
-| php_cve_audit_local.py | 17942 | 1d4d66e54870ef264f1d51294c208f70797f8c2b9ac1bbd3f479afb814975922 |
-| php_cve_scanner.py | 22952 | 17034075d449d06037f06caf22536669c7aac0fed8fd646f569ce55a0b522ca4 |
-| README.md | 15334 | 10999df5cff556721c49221ebc51ac781e6d07930a7f47f9f0034cc49f03a2f4 |
+| php_cve_audit_local.py | 18714 | dff2d6320ced6d935e0cf520539f2f53f2257333d1a27b46581b9a0b09fd569e |
+| php_cve_scanner.py | 23909 | ef89f0a9ef10170745227ab4939e95c36ff352079318823064ff9dd7fc9077b0 |
+| README.md | 16193 | 920855993d1857fd0e3d714ad124bb444e761e48311c4dbce4c928021cf40405 |
 | SBOM.md | self-referential; verify at deployment | |
 | test_mock_server.py | 1800 | b0e70bc3fa9591e77ae07494c5b27aa154deb8022592c61b8c35cfad92af50c8 |
 | test_suite.py | 4516 | b4978f0baf65d62372d0426ea460c66d29e7e7c8bc5a6e3ec494147d963aa137 |
+| run_scan.ps1 | 3793 | 45f50b386725fd8841f5fdf090072700c46a40a7e5428498c674e61ddef12685 |
+| run_scan.sh | 1873 | 1beac595c88a87da7135d38057bf94b447289ecded04ed36d1fd393e2ae02aae |
 
 Note: SBOM.md's own hash is self-referential and therefore left blank; every
 other file, including README.md, carries its final hash above. Compute the
