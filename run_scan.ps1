@@ -36,46 +36,86 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
-    Write-Error "python is required on PATH but was not found."
+$pythonCommand = Get-Command python -ErrorAction SilentlyContinue
+$pythonPrefix = @()
+if (-not $pythonCommand) {
+    $pythonCommand = Get-Command py -ErrorAction SilentlyContinue
+    if ($pythonCommand) { $pythonPrefix = @("-3") }
+}
+if (-not $pythonCommand) {
+    $pythonCommand = Get-Command python3 -ErrorAction SilentlyContinue
+}
+if (-not $pythonCommand) {
+    Write-Warning "python, py, or python3 is required on PATH but was not found."
     exit 1
 }
+$pythonExe = $pythonCommand.Source
 
 if ($Mode -eq "scan" -and -not $Subnet -and -not $Target) {
-    Write-Error "scan mode requires -Subnet or -Target."
+    Write-Warning "scan mode requires -Subnet or -Target."
+    exit 1
+}
+if ($Mode -eq "scan" -and $Subnet -and $Target) {
+    Write-Warning "scan mode accepts either -Subnet or -Target, not both."
     exit 1
 }
 
 $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $null = New-Item -ItemType Directory -Force -Path $OutputDir
+$resolvedOutputDir = (Resolve-Path -LiteralPath $OutputDir).Path
 
 if ($Mode -eq "scan") {
-    $json = Join-Path $OutputDir "findings-$stamp.json"
-    $csv = Join-Path $OutputDir "findings-$stamp.csv"
-    $args = @("php_cve_scanner.py", "--output", $json, "--csv", $csv)
-    if ($Subnet) { $args += @("--subnet", $Subnet) }
-    if ($Target) { $args += @("--target", $Target) }
+    $tool = Join-Path $PSScriptRoot "php_cve_scanner.py"
+    $json = Join-Path $resolvedOutputDir "findings-$stamp.json"
+    $csv = Join-Path $resolvedOutputDir "findings-$stamp.csv"
+    $toolArgs = @($tool, "--output", $json, "--csv", $csv)
+    if ($Subnet) { $toolArgs += @("--subnet", $Subnet) }
+    if ($Target) { $toolArgs += @("--target", $Target) }
 } else {
-    $json = Join-Path $OutputDir "audit-$stamp.json"
-    $csv = Join-Path $OutputDir "audit-$stamp.csv"
-    $args = @("php_cve_audit_local.py", "--json", $json, "--csv", $csv)
+    $tool = Join-Path $PSScriptRoot "php_cve_audit_local.py"
+    $json = Join-Path $resolvedOutputDir "audit-$stamp.json"
+    $csv = Join-Path $resolvedOutputDir "audit-$stamp.csv"
+    $toolArgs = @($tool, "--json", $json, "--csv", $csv)
+}
+
+if (-not (Test-Path -LiteralPath $tool -PathType Leaf)) {
+    Write-Warning "Scanner component not found: $tool"
+    exit 1
 }
 
 $extra = @()
 if ($ExtraArgs) {
     $extra = $ExtraArgs.Split(",") | ForEach-Object { $_.Trim() } | Where-Object { $_ }
 }
-$args += $extra
+$toolArgs += $extra
 
-# -Wait with no timeout: scan duration depends on subnet size; callers
-# scheduling this should size their window accordingly.
-$proc = Start-Process -FilePath "python" -ArgumentList $args -NoNewWindow -Wait -PassThru
-$code = $proc.ExitCode
+$invokeArgs = @($pythonPrefix) + $toolArgs
+& $pythonExe @invokeArgs
+$code = $LASTEXITCODE
+
+# Security-result codes are trusted only when the tool produced parseable
+# evidence files. This prevents an interpreter/tool launch error that happens
+# to return 2 or 3 from being mislabeled as a security finding.
+$resultsValid = $false
+if ($code -in @(0, 2, 3)) {
+    if ((Test-Path -LiteralPath $json -PathType Leaf) -and
+        (Test-Path -LiteralPath $csv -PathType Leaf)) {
+        try {
+            $null = Get-Content -LiteralPath $json -Raw | ConvertFrom-Json
+            $resultsValid = $true
+        } catch {
+            Write-Warning "Result JSON is missing or invalid: $json"
+        }
+    } else {
+        Write-Warning "Expected result files were not produced; treating this as an infrastructure failure."
+    }
+    if (-not $resultsValid) { $code = 1 }
+}
 
 switch ($code) {
     0 {
-        Write-Host "PASS: completed with no affected or unknown PHP evidence."
-        $summary = "pass"
+        Write-Host "COMPLETE-NO-FINDINGS: no affected or reviewable PHP evidence was observed; absence of evidence is not proof of remediation."
+        $summary = "complete-no-findings"
     }
     1 {
         Write-Warning "FAIL-INFRA: command error or no reachable endpoint. Check connectivity and arguments; this is not a security result."
@@ -99,7 +139,9 @@ switch ($code) {
     mode = $Mode
     exit_code = $code
     summary = $summary
-    json = (Resolve-Path $OutputDir).Path
+    results_valid = $resultsValid
+    json = $json
+    csv = $csv
 } | ConvertTo-Json | Write-Output
 
 # Propagate the tool's code so callers that care about the raw contract

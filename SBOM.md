@@ -159,12 +159,12 @@ Computed over the final state of each file. Re-verify after any local edit.
 | php_binary_check.py | 7646 | 4a89739740a363ec839ea1c288632723605e2ff3c9f92da9e13c097e80d4a445 |
 | php_cve_audit_local.py | 18714 | dff2d6320ced6d935e0cf520539f2f53f2257333d1a27b46581b9a0b09fd569e |
 | php_cve_scanner.py | 23909 | ef89f0a9ef10170745227ab4939e95c36ff352079318823064ff9dd7fc9077b0 |
-| README.md | 16193 | 920855993d1857fd0e3d714ad124bb444e761e48311c4dbce4c928021cf40405 |
+| README.md | 16547 | ff96ece7b4d009d7160601f084741e8fe91ab915a57a7323991c29032bb1082e |
 | SBOM.md | self-referential; verify at deployment | |
 | test_mock_server.py | 1800 | b0e70bc3fa9591e77ae07494c5b27aa154deb8022592c61b8c35cfad92af50c8 |
 | test_suite.py | 4516 | b4978f0baf65d62372d0426ea460c66d29e7e7c8bc5a6e3ec494147d963aa137 |
-| run_scan.ps1 | 3793 | 45f50b386725fd8841f5fdf090072700c46a40a7e5428498c674e61ddef12685 |
-| run_scan.sh | 1873 | 1beac595c88a87da7135d38057bf94b447289ecded04ed36d1fd393e2ae02aae |
+| run_scan.ps1 | 5342 | bc850456d44ca18ef737d783c2fd6f6b6f76c712a2cdd0e8665c61e5078510b0 |
+| run_scan.sh | 3287 | 59bbaa406f05c04aceb9ba21f1f3163ecf63232e9d861ee0a3e25dcb41b3a52b |
 
 Note: SBOM.md's own hash is self-referential and therefore left blank; every
 other file, including README.md, carries its final hash above. Compute the
@@ -175,9 +175,9 @@ SBOM's hash separately at deployment:
 Then verify the rest of the suite against section 8:
 
     # PowerShell
-    Get-ChildItem -File | Where-Object Name -match '\.(py|md)$' | ForEach-Object { "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name }
+    Get-ChildItem -File | Where-Object Name -match '\.(py|md|ps1|sh)$' | ForEach-Object { "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name }
     # bash
-    sha256sum *.py *.md
+    sha256sum *.py *.md *.ps1 *.sh
 
 ## 9. Known limitations of this SBOM
 

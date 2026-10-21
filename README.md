@@ -212,8 +212,8 @@ Exit codes are automation-friendly: `0` means no affected/unknown result,
 Command-line usage errors also exit 1, not 2, so that a malformed invocation
 can never be mistaken for an affected finding.
 
-Reference consumers that translate this contract into operationally labelled
-results (PASS / FAIL-INFRA / FAIL-AFFECTED / REVIEW) are included:
+Reference consumers translate this contract into operationally labelled
+results (COMPLETE-NO-FINDINGS / FAIL-INFRA / FAIL-AFFECTED / REVIEW):
 
     # PowerShell (works with -File, scheduled tasks)
     .\run_scan.ps1 -Mode scan -Subnet 10.20.0.0/24
@@ -224,10 +224,16 @@ results (PASS / FAIL-INFRA / FAIL-AFFECTED / REVIEW) are included:
     ./run_scan.sh scan --subnet 10.20.0.0/24
     ./run_scan.sh audit
 
-Both write timestamped JSON/CSV into --OutputDir or PHP2SHELL_OUTDIR
-(default ./php2shell-results), print a human-readable verdict, emit a JSON
-summary object, and propagate the tool's exit code so CI can gate on it.
-Adapt these rather than re-deriving the mapping in each downstream script.
+Both resolve the Python tools relative to their own location, so callers may
+launch them from any working directory. They write timestamped JSON/CSV into
+`-OutputDir` or `PHP2SHELL_OUTDIR` (default `./php2shell-results`), print a
+human-readable verdict, emit a JSON summary with the actual artifact paths,
+and propagate the tool's exit code. Codes 0/2/3 are accepted as security
+results only when parseable JSON and the expected CSV exist; otherwise the
+wrapper returns infrastructure failure (1).
+
+`COMPLETE-NO-FINDINGS` is not a clean bill of health. It means only that this
+run observed no affected or reviewable PHP evidence.
 
 ## 4. Interpreting results
 
@@ -330,6 +336,6 @@ SHA-256 hashes for every file in this suite are recorded in SBOM.md. Verify
 before deployment:
 
     # PowerShell
-    Get-ChildItem -File | Where-Object Name -match '\.(py|md)$' | ForEach-Object { (Get-FileHash $_.FullName -Algorithm SHA256).Hash }
+    Get-ChildItem -File | Where-Object Name -match '\.(py|md|ps1|sh)$' | ForEach-Object { (Get-FileHash $_.FullName -Algorithm SHA256).Hash }
     # bash
-    sha256sum *.py *.md
+    sha256sum *.py *.md *.ps1 *.sh
