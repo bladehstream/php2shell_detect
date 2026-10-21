@@ -60,10 +60,10 @@ Both fixes are in the same release because both were coordinated by the PHP
 security team; the shared root cause is that request-state cleanup and
 allocation-failure handling assumed a single clean request lifecycle.
 
-## Ground-truth binary signatures
+## Corroborating OOM-patch binary signatures
 
-The diff shows the fix introduced strings that exist in every fixed build and
-none of the affected builds, verified against all eight tarballs:
+The diff shows that the OOM memory-manager rework introduced strings present
+in every tested fixed build and absent from every tested affected build:
 
     memory_hard_limit_percent       (new INI directive name)
     ZEND_MM_MAX_ALLOCS              (env var read at request startup)
@@ -72,19 +72,25 @@ none of the affected builds, verified against all eight tarballs:
 
 Verification matrix:
 
-    php-8.2.34  0 hits  VULNERABLE
-    php-8.2.35  19 hits PATCHED
-    php-8.3.35  0 hits  VULNERABLE
-    php-8.3.36  19 hits PATCHED
-    php-8.4.26  0 hits  VULNERABLE
-    php-8.4.27  19 hits PATCHED
-    php-8.5.11  0 hits  VULNERABLE
-    php-8.5.12  19 hits PATCHED
+    php-8.2.34  0 hits  OOM signatures absent
+    php-8.2.35  19 hits OOM signatures present
+    php-8.3.35  0 hits  OOM signatures absent
+    php-8.3.36  19 hits OOM signatures present
+    php-8.4.26  0 hits  OOM signatures absent
+    php-8.4.27  19 hits OOM signatures present
+    php-8.5.11  0 hits  OOM signatures absent
+    php-8.5.12  19 hits OOM signatures present
 
 This matters because Linux distributions frequently backport security fixes
 without bumping the version string, so a host reporting "PHP 8.2.34" from a
 distro package may actually be fixed. A version check alone cannot tell; the
-binary string check can.
+binary string check can add useful evidence.
+
+These strings directly characterize the CVE-2026-109618 OOM architecture.
+They do not independently establish that every CVE-2026-109619 state-reset
+change was included in a partial vendor or custom backport. Official upstream
+fixed releases contain both fixes; non-upstream builds still require package
+or source provenance covering both CVEs.
 
 ### Validation against real distro packages
 
@@ -93,10 +99,10 @@ upstream tarballs:
 
 | Package | Version claim | Signature verdict | Expected | Result |
 |---------|---------------|-------------------|----------|--------|
-| Debian 12 security: php8.2-cli_8.2.34-1~deb12u1 | 8.2.34 | 0/3 hits | VULNERABLE | pass |
-| Debian 12 security: php8.2-cli_8.2.35-1~deb12u1 | 8.2.35 | 3/3 hits | PATCHED | pass |
-| Remi EL9: php-cli-8.2.34-1.module_php.8.2.el9.remi | 8.2.34 | 0/3 hits | VULNERABLE | pass |
-| Remi EL9: php-cli-8.2.35-1.module_php.8.2.el9.remi | 8.2.35 | 3/3 hits | PATCHED | pass |
+| Debian 12 security: php8.2-cli_8.2.34-1~deb12u1 | 8.2.34 | 0/3 hits | Absent | pass |
+| Debian 12 security: php8.2-cli_8.2.35-1~deb12u1 | 8.2.35 | 3/3 hits | Present | pass |
+| Remi EL9: php-cli-8.2.34-1.module_php.8.2.el9.remi | 8.2.34 | 0/3 hits | Absent | pass |
+| Remi EL9: php-cli-8.2.35-1.module_php.8.2.el9.remi | 8.2.35 | 3/3 hits | Present | pass |
 
 Details:
 
@@ -123,11 +129,10 @@ is exactly how a silent backport would be caught on such a distro.
 
 Tools using these signatures:
 
-- php_binary_check.py - standalone checker for any binary/library, including
-  a --dir mode for scanning a filesystem image or package directory tree.
-- php_cve_audit_local.py - the local audit now combines the version check with
-  the binary signature check and reports the reconciled verdict, flagging
-  version-string/backport mismatches explicitly instead of guessing.
+- php_binary_check.py - standalone evidence checker for identifiable PHP
+  binaries/libraries, including a non-recursive --dir mode.
+- php_cve_audit_local.py - combines version/package evidence with these
+  signatures and sends disagreements to manual provenance review.
 
 ## Also interesting: what else shipped in the same release
 
@@ -152,7 +157,7 @@ The NCSC Netherlands php2shell advisory
 (https://github.com/NCSC-NL/php2shell/blob/main/README.md) independently
 documents the same vulnerability class. Their mitigation list matches the
 code paths identified here: session.upload_progress.enabled=0 and
-fatal_error_backtraces=0 reduce exposure to the OOM bailout path,
+fatal_error_backtraces=0 reduce specific stale-state paths,
 memory_limit and post_max_size sizing affects trigger feasibility, and their
 hunt indicators (unexpected OOM fatal errors, worker crashes following large
 POST or multipart requests) correspond to the trigger conditions in the
@@ -166,10 +171,9 @@ assessment is correct.
   binaries will still match if strings are present in the decompressed image
   in memory, but not from the on-disk file. This is rare for PHP distro
   packages; flag it for manual review via the partial-match path.
-- Some exotic builds (e.g. some hardened/custom-built PHP) may compile out
-  ZEND_MM_LIMIT entirely, in which case the "Hard memory limit of" string is
-  absent even in a patched build; the tool reports this as partial match
-  (UNKNOWN) rather than guessing.
+- Some exotic builds may compile out relevant memory-limit features, making
+  all or some strings absent even in a patched build. Absence is therefore
+  medium-confidence evidence, not a complete source attestation.
 - Only the official php.net tarballs were used for this analysis. Distro
   source packages (e.g. Debian's php8.2_8.2.34-1.debian.tar.xz) apply their
   own patch series and may reorder or rename; if you audit distro packages,

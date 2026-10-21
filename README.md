@@ -1,29 +1,29 @@
 # PHP2Shell Detection Suite (CVE-2026-109618 / CVE-2026-109619)
 
-Detection and audit tooling for the two "PHP2Shell" advisories published by
-the PHP security team in October 2026. Both are memory-corruption bugs
-reachable by any HTTP request against a vanilla PHP installation; no specific
-application code is required. Suite contents:
+Defensive inventory tooling for the two "PHP2Shell" advisories published by
+the PHP security team in October 2026. The suite uses safe HTTP fingerprinting,
+authenticated host inventory, package provenance and static OOM-patch
+indicators. It does not send multipart, memory-exhaustion, FastCGI execution
+or PHP-CGI command-line probes. Suite contents:
 
 | File | Purpose | Runs on |
 |------|---------|---------|
 | php_cve_scanner.py | Network scanner: fingerprints PHP over HTTP and classifies versions against fixed thresholds | Any machine with network reachability to targets |
-| php_cve_audit_local.py | Local host audit: inventories PHP binaries, packages and processes, with binary-signature verification | The host being audited (or pushed via config management) |
-| php_binary_check.py | Standalone checker: detects the actual fix inside a compiled PHP binary, independent of its version string | Any machine that can read the binary file |
+| php_cve_audit_local.py | Local host audit: inventories PHP binaries, packages, Apache modules and running processes | The host being audited (or pushed via config management) |
+| php_binary_check.py | Static OOM-patch evidence for an identified compiled PHP binary or library | Any machine that can read the binary file |
 | test_mock_server.py | Local mock web server for validating the scanner before production use | Anywhere |
+| test_suite.py | Positive and negative automated regression tests | Anywhere |
 | CVE_ANALYSIS.md | Root-cause analysis from diffing the official php-src tarballs, signature derivation and distro validation | Documentation |
 | SBOM.md | Software bill of materials for this suite | Documentation |
 
-Both CVEs are fixed in PHP 8.2.35, 8.3.36, 8.4.27 and 8.5.12. PHP 8.1 and
-earlier receive no fix (8.1 is security-EOL) and must be treated as vulnerable
-regardless of patch level.
+Both CVEs are fixed upstream in PHP 8.2.35, 8.3.36, 8.4.27 and 8.5.12. PHP
+8.1 and earlier have no fixed upstream maintenance release, but vendor and
+source backports exist. Exact package/build provenance is required.
 
 ## 1. How detection works
 
-The suite uses four independent detection methods, ordered from widest reach
-to highest certainty. Understanding the layering matters: no single method is
-conclusive on its own, and the ones that are conclusive require access the
-network scanner does not have.
+The suite layers network leads, local package/runtime evidence and static
+binary indicators. No single method is universally conclusive.
 
 ### 1.1 Network fingerprinting (php_cve_scanner.py, default mode)
 
@@ -31,13 +31,14 @@ Sends plain GET requests and reads response headers:
 
 1. X-Powered-By header. PHP embeds its version here unless expose_php is
    turned off. The most common leak and the default first probe.
-2. Session-cookie probe. If no banner appears, the scanner appends a
-   PHPSESSID query parameter to each path; a PHP session Set-Cookie response
-   confirms the runtime without revealing the version.
-3. Path probing. Twelve default paths (index.php, info.php, phpinfo.php,
+2. Organic PHP session cookies. Values are redacted; only the cookie name and
+   value length are retained.
+3. Path probing. Common paths (index.php, info.php, phpinfo.php,
    cgi-bin/php handlers, etc.), overridable with --paths.
-4. CGI handler probes (--path-traversal flag). Additional benign probes for
-   hosts running PHP through cgi-bin handlers rather than mod_php or FPM.
+
+Redirects and environment proxies are disabled to prevent findings being
+misattributed to another host. Response headers are handled case-insensitively
+and duplicate headers are preserved.
 
 Every version found is compared against the fixed threshold for its branch:
 
@@ -47,30 +48,27 @@ Every version found is compared against the fixed threshold for its branch:
 | 8.3    | 8.3.36              |
 | 8.4    | 8.4.27              |
 | 8.5    | 8.5.12              |
-| <= 8.1 | no fix exists       |
+| <= 8.1 | no fixed upstream maintenance release; verify vendor/source backport |
 
 Output buckets:
 
 - PATCH: version detected, below the fixed version for its branch.
-- NO-FIX: branch has no fix at all (7.4, 8.0, 8.1 and older).
+- NO-FIX: branch has no fixed upstream release; vendor/source evidence is needed.
 - UNKNOWN: PHP present but version unreadable.
 - OK: at or above the fixed version for its branch.
 
 ### 1.2 Deep presence probing (--deep-presence)
 
-Catches hosts that hide their banner (expose_php = Off) and never emit
-session cookies on the probed paths. Three additional benign GET checks:
+Catches some hosts that hide their banner. Three additional ordinary GET checks:
 
 1. php-fpm missing-script fingerprint. A request for a random nonexistent
    .php path gets an exact "File not found." 404 body when it reaches the
-   FastCGI backend. Static servers and other runtimes do not produce this
-   exact response.
+   FastCGI backend. This is still heuristic evidence and can be imitated.
 2. fpm-ping / fpm-status endpoints. Default nginx + php-fpm configs expose
    /fpm-ping ("pong") and /fpm-status ("pool:" table); /ping and /status
    variants are also probed.
-3. PHP error signatures in response bodies ("Fatal error", "Parse error",
-   "Deprecated: ", "Undefined variable", "Undefined index"), which identify
-   the runtime even with all metadata hidden.
+3. PHP error signatures in error responses. Application or documentation
+   content can imitate these strings, so they remain leads.
 
 None of these touch any code path related to either CVE. Findings are
 reported as UNKNOWN version, PHP present, because none of them reveal the
@@ -85,29 +83,24 @@ reported as a lead rather than a verdict.
 
 ### 1.4 Binary signature verification (php_binary_check.py and the local audit)
 
-The definitive method. Diffing the official php-src tarballs for each
-affected/fixed pair (see CVE_ANALYSIS.md) shows that the fix introduced
-strings that exist in every fixed build and none of the affected builds:
+Diffing the official php-src tarballs for each affected/fixed pair (see
+CVE_ANALYSIS.md) found strings introduced by the new OOM memory manager:
 
     memory_hard_limit_percent    (new INI directive)
     ZEND_MM_MAX_ALLOCS           (env var read at request startup)
     Hard memory limit of         (new hard-limit error message)
 
-All three are required. A fourth (zend_mm_set_max_allocs, a symbol name) is
-checked but optional, since release builds may strip it. Two more signals
-corroborate: the new OOM format variant ("Allowed memory size of %zu bytes
-exhausted at %s:%d") should be present in patched builds, while the old
-format alone supports a VULNERABLE verdict.
+All three are required for a positive OOM-signature result. A fourth
+(`zend_mm_set_max_allocs`) is optional because release builds may strip it.
 
-The checker reports PATCHED, VULNERABLE or UNKNOWN with per-string evidence.
-UNKNOWN (partial match) means possible partial backport or a build compiled
-without ZEND_MM_LIMIT; it never guesses.
+The checker reports OOM_FIX_SIGNATURES_PRESENT, OOM_FIX_SIGNATURES_ABSENT,
+PARTIAL_OOM_FIX_SIGNATURES or NOT_PHP_RUNTIME. It validates ELF/PE/Mach-O and
+PHP applicability before interpreting strings.
 
-This method is immune to the classic version-string problem: Linux distros
-frequently backport security fixes without bumping the reported version, so a
-host claiming "8.2.34" may actually be fixed. The signature check resolves
-that ambiguity in both directions - it also catches a custom build claiming a
-fixed version while lacking the fix.
+These signatures are corroborating evidence for the CVE-2026-109618 OOM-fix
+family. They do not independently prove that every CVE-2026-109619 state-reset
+change was included in a vendor/custom backport. A complete fixed verdict
+requires upstream or vendor package/source provenance covering both CVEs.
 
 Validated against real distro packages (Debian 12 security pool and Remi EL9,
 both affected and fixed builds, with the Remi 8.2.35 RPM sha256-verified
@@ -118,24 +111,18 @@ that were not tested.
 
 ### 1.5 What the local audit combines
 
-php_cve_audit_local.py inventories PHP from three angles and reconciles the
-evidence:
+php_cve_audit_local.py inventories PHP from several angles:
 
-1. Binaries on PATH (php, php8.2 ... php5.6), each checked with
-   php --version AND the binary signature probe.
-2. OS packages via dpkg -l (Debian/Ubuntu) or rpm -qa (RHEL/SUSE), filtered
-   to PHP packages; on Windows, common install paths.
-3. Running processes (php-fpm, php-cgi, tasklist on Windows) so versions the
-   package manager no longer tracks are not missed.
+1. PATH and common CLI/FPM/CGI/cPanel/Plesk/CloudLinux/Remi/LiteSpeed paths.
+2. Narrowly matched DPKG/RPM PHP runtime packages, including published Ubuntu
+   package floors for both CVEs.
+3. Running PHP-family processes resolved through `/proc/<pid>/exe` on Linux.
+4. Loaded Apache `libphp*.so` modules found through `/proc/<pid>/maps`.
+5. Common Windows PHP paths and process names (with less complete provenance).
 
-Where version and signature agree, the verdict is simple. Where they
-disagree, the audit reports the discrepancy explicitly:
-
-- version says vulnerable, signatures present: backported fix, treat as
-  PATCHED (this is the silent-backport catch).
-- version says fixed, signatures absent: possible custom/foreign build,
-  manual review.
-- partial signature match: manual review.
+Package and process evidence are reported separately. A fixed package on disk
+does not prove that old workers restarted. Confirm loaded paths, process start
+times, service restarts and container image digests before closure.
 
 ## 2. Prerequisites
 
@@ -155,10 +142,9 @@ disagree, the audit reports the discrepancy explicitly:
 ### For the local audit (php_cve_audit_local.py)
 
 - Python 3.10+ on the target host, or any Python able to run over SSH/WinRM.
-- No third-party packages. No admin rights needed: everything it reads
-  (PATH binaries, package databases via dpkg/rpm, process lists) is
-  readable on a normal system. It never writes outside the output files
-  you name.
+- No third-party packages. Elevated rights improve access to other users'
+  `/proc/<pid>/maps`; without them, inaccessible process evidence is skipped.
+  It never writes outside the output files you name.
 - For deployment at scale: whatever config-management channel you already
   run (Ansible, Salt, SCCM, Intune). One JSON per host, aggregated centrally.
 
@@ -207,6 +193,8 @@ disagree, the audit reports the discrepancy explicitly:
 
 ### Validate before production use
 
+    python -m unittest -v test_suite.py
+
     # terminal 1
     python test_mock_server.py
     # terminal 2
@@ -217,6 +205,11 @@ vulnerable, 8.3.36 patched, 7.4.33 no-fix, 8.5.11 vulnerable) plus a php-fpm
 "File not found." fingerprint on random missing .php paths, so all detection
 paths can be exercised locally.
 
+Exit codes are automation-friendly: `0` means no affected/unknown result,
+`1` means no configured network endpoint was reachable or the command failed,
+`2` means affected evidence was found, and `3` means PHP evidence requires
+manual provenance review.
+
 ## 4. Interpreting results
 
 - A PATCH or NO-FIX network finding is a strong signal but not proof: distros
@@ -225,16 +218,15 @@ paths can be exercised locally.
   before declaring it vulnerable enough to warrant emergency change control.
 - An OK from the network scanner means the banner reports a fixed version;
   combined with the backport caveat this is good-faith evidence, not proof.
-- A binary-signature PATCHED verdict is the strongest remotely verifiable
-  evidence available and overrides the version string in the local audit's
-  reconciliation.
+- OOM fix signatures corroborate CVE-2026-109618 remediation but do not, by
+  themselves, prove the complete CVE-2026-109619 state-reset patch.
 - Absence of any network finding does not prove absence of PHP. expose_php =
   Off hides the banner; apps may not emit session cookies on probed paths;
   WAFs, unusual paths and firewalled FastCGI listeners all reduce
-  visibility. Deep-presence mode narrows this gap substantially but the only
-  complete closure is the local audit.
-- For audit trails, keep the JSON output: every finding carries its evidence
-  (header value, cookie string, signature hits) not just the verdict.
+  visibility. Deep-presence mode narrows this gap; package, process, container,
+  appliance and cloud inventory are still required for complete coverage.
+- For audit trails, keep the JSON output. Cookie values are deliberately
+  redacted; evidence retains only cookie name and value length.
 
 ## 5. Safety notes
 
@@ -249,6 +241,10 @@ paths can be exercised locally.
   maintenance window, not a scanning task.
 - The --fpm-port check opens one TCP connection and closes it; some
   intrusion-detection systems log bare connects. Tell your SOC.
+- PHP-CGI `-s`, `-d` and `-v` query options are deliberately not sent. They
+  test an unrelated CGI surface and can disclose source or change behavior.
+- Redirects and environment proxies are disabled to avoid sending internal
+  targets elsewhere or attributing a destination's PHP to the original host.
 - Rate: default 64 threads is gentle. Scale --threads to taste but be aware
   of load balancers, rate limiters and php-fpm worker pool exhaustion on
   small targets.
@@ -258,21 +254,21 @@ paths can be exercised locally.
 
 1. Version strings can lie in both directions (backported fixes that do not
    bump the version; custom builds that claim a version they do not have).
-   The binary signature check is the corrective, and it is validated on
+   Binary signatures are corroborating evidence, validated on
    Debian and Remi packages, but not yet on Ubuntu, Alpine, SUSE, Oracle
    Linux or Amazon Linux builds. If those are in your estate, run the local
    audit on one host per distro first and check for version/signature
    mismatch flags before full rollout.
-2. Static or packed binaries may not show strings on disk that exist in the
-   decompressed in-memory image. Rare for distro PHP; reported as UNKNOWN.
-3. Exotic builds compiled without ZEND_MM_LIMIT lack the "Hard memory limit
-   of" string even when patched; reported as UNKNOWN, never guessed.
+2. Static or packed binaries may not expose the expected strings on disk.
+   Partial or absent evidence must be reconciled with vendor provenance.
+3. Exotic builds compiled without relevant memory-limit features can lack
+   strings even when patched; absence is medium-confidence evidence.
 4. Distro source packages apply their own patch series on top of upstream.
    The validation against Debian and Remi covers the two most common
    packaging styles; if you audit a distro with heavier patching, verify one
    package against that distro's patched source before trusting VULNERABLE.
-5. Network silence is not proof of absence (see 1.2/1.3). Only the local
-   audit closes the gap completely.
+5. Network silence is not proof of absence. The local audit also cannot see
+   every container, appliance, network filesystem or proprietary runtime.
 6. The signature set is specific to this fix. When the next PHP security
    release ships, the signatures must be re-derived by diffing the new
    affected/fixed pair; the strings describe this fix's architecture
@@ -282,6 +278,18 @@ paths can be exercised locally.
    (https://github.com/NCSC-NL/php2shell/blob/main/README.md) independently
    documents the same bug class with consistent mitigations and hunt
    indicators; that agreement is a useful external cross-check.
+
+The audit also embeds NCSC-NL/Canonical fixed package floors for Trusty PHP
+5.5, Xenial 7.0, Bionic 7.2, Focal 7.4, Jammy 8.1, Noble 8.3, Resolute 8.5
+and Stonking 8.5. Some older packages require Ubuntu Pro/ESM. Other vendors
+must be evaluated against their own advisories.
+
+This suite inventories exposure; it is not a compromise detector. PHP notes
+that some paths may leave no predictable log entry. Expel recommends also
+monitoring for PHP/web workers spawning shells or downloaders, changed PHP
+files in web roots, unexpected outbound connections, and spikes in fatal
+errors, memory exhaustion or crashing workers. Updating and restarting every
+FPM, mod_php and long-running PHP worker remains the only complete fix.
 
 ## 7. Quick reference
 
@@ -294,7 +302,7 @@ paths can be exercised locally.
     # host audit
     python php_cve_audit_local.py --json audit.json
 
-    # ground truth on a binary
+    # corroborating OOM-patch evidence on a binary
     python php_binary_check.py /usr/bin/php
 
 ## 8. Files and integrity

@@ -3,11 +3,10 @@
 php_binary_check.py
 ===================
 
-Definitive check of whether a PHP binary or shared library contains the
-CVE-2026-109618 / CVE-2026-109619 fix. Works directly on the compiled binary
-by searching for unique strings that only exist in the patched memory
-manager, so it is immune to distro version-string backporting (where the
-version stays "8.2.34" but the fix is actually applied).
+Checks a PHP binary or shared library for strings introduced by the new OOM
+memory manager. These strings are strong corroborating evidence for the
+CVE-2026-109618 fix family, but do not independently prove that every
+CVE-2026-109619 state-reset change was backported.
 
 Signatures used (present in ALL fixed versions 8.2.35 / 8.3.36 / 8.4.27 /
 8.5.12, absent in ALL affected versions):
@@ -30,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -47,17 +47,59 @@ SIGNATURES = [
 OLD_OOM_FORMAT = b"Allowed memory size of %zu bytes exhausted (tried to allocate %zu bytes)"
 NEW_OOM_FORMAT = b"Allowed memory size of %zu bytes exhausted at %s:%d (tried to allocate %zu bytes)"
 
+PHP_FILENAME_RE = re.compile(
+    r"(?i)(?:^|[-_.])(?:php(?:\d+(?:\.\d+)?)?(?:-?fpm|-?cgi)?|"
+    r"libphp\d*(?:\.\d+)?|lsphp\d*|frankenphp|php\d*\.dll)(?:[-_.]|$)"
+)
+EXECUTABLE_MAGICS = (
+    b"\x7fELF",  # ELF
+    b"MZ",       # PE/COFF
+    b"\xfe\xed\xfa\xce", b"\xce\xfa\xed\xfe",  # Mach-O 32-bit
+    b"\xfe\xed\xfa\xcf", b"\xcf\xfa\xed\xfe",  # Mach-O 64-bit
+)
+
+
+def _is_executable_format(data: bytes) -> bool:
+    return any(data.startswith(magic) for magic in EXECUTABLE_MAGICS)
+
+
+def _is_php_runtime(path: Path, data: bytes) -> bool:
+    """Reject arbitrary files before interpreting fix strings.
+
+    Names are only a hint: a supported executable format and either a
+    PHP-runtime filename or characteristic runtime data are required.
+    """
+    if not _is_executable_format(data):
+        return False
+    name_hint = bool(PHP_FILENAME_RE.search(path.name))
+    runtime_markers = (
+        b"Zend Engine",
+        b"PHP Version",
+        b"php.ini",
+        b"PHPAPI",
+        b"PHP Extension",
+    )
+    return name_hint or any(marker in data for marker in runtime_markers)
+
 
 def check_file(path: Path) -> dict:
     data = path.read_bytes()
     result = {
         "path": str(path),
         "size": len(data),
+        "applicable": False,
         "signatures": {},
+        "oom_fix_signatures": None,
         "patched": None,
         "confidence": "low",
         "reason": "",
     }
+    if not _is_php_runtime(path, data):
+        result["verdict"] = "NOT_PHP_RUNTIME"
+        result["reason"] = "File is not an identifiable PHP executable or runtime library"
+        return result
+
+    result["applicable"] = True
     required_hits = 0
     required_total = 0
     for sig, required in SIGNATURES:
@@ -73,22 +115,25 @@ def check_file(path: Path) -> dict:
     result["signatures"]["old_oom_format_present"] = OLD_OOM_FORMAT in data
 
     if required_hits == required_total:
-        result["patched"] = True
+        result["oom_fix_signatures"] = True
+        result["verdict"] = "OOM_FIX_SIGNATURES_PRESENT"
         result["confidence"] = "high"
         result["reason"] = (
-            "All required patched-version strings present. Binary contains the "
-            "fallible-allocation memory manager introduced with the CVE-2026-109618/109619 fix."
+            "All required OOM-patch strings are present. This strongly supports "
+            "the CVE-2026-109618 fix family, but complete dual-CVE status still "
+            "requires upstream or vendor build provenance."
         )
     elif required_hits == 0:
-        result["patched"] = False
-        result["confidence"] = "high"
+        result["oom_fix_signatures"] = False
+        result["verdict"] = "OOM_FIX_SIGNATURES_ABSENT"
+        result["confidence"] = "medium"
         result["reason"] = (
-            "No patched-version strings present. Binary predates the "
-            "CVE-2026-109618/109619 fix (vulnerable unless distro backported "
-            "without the new strings, which is very unusual)."
+            "No OOM-patch strings are present. This supports an affected build, "
+            "but unusual compile options or a differently structured vendor "
+            "backport require package/source provenance before a final verdict."
         )
     else:
-        result["patched"] = None
+        result["verdict"] = "PARTIAL_OOM_FIX_SIGNATURES"
         result["confidence"] = "medium"
         result["reason"] = (
             f"Partial match: {required_hits}/{required_total} required strings "
@@ -123,21 +168,21 @@ def main(argv=None) -> int:
         try:
             r = check_file(t)
         except PermissionError as e:
-            r = {"path": str(t), "error": f"permission denied: {e}", "patched": None}
+            r = {"path": str(t), "error": f"permission denied: {e}", "patched": None, "verdict": "ERROR"}
         except OSError as e:
-            r = {"path": str(t), "error": str(e), "patched": None}
+            r = {"path": str(t), "error": str(e), "patched": None, "verdict": "ERROR"}
         results.append(r)
 
     if args.quiet:
         for r in results:
-            verdict = {True: "PATCHED", False: "VULNERABLE", None: "UNKNOWN"}.get(r.get("patched"), "ERROR")
+            verdict = r.get("verdict", "ERROR")
             print(f"{verdict}  {r['path']}" + (f"  {r.get('error')}" if "error" in r else ""))
     else:
         for r in results:
             if "error" in r:
                 print(f"ERROR  {r['path']}: {r['error']}")
                 continue
-            verdict = {True: "PATCHED", False: "VULNERABLE", None: "UNKNOWN"}.get(r["patched"], "UNKNOWN")
+            verdict = r.get("verdict", "UNKNOWN")
             print(f"\n{verdict}  {r['path']}  ({r['size']:,} bytes)")
             print(f"  Confidence: {r['confidence']}")
             print(f"  {r['reason']}")
@@ -149,6 +194,10 @@ def main(argv=None) -> int:
         Path(args.json).write_text(json.dumps(results, indent=2))
         if not args.quiet:
             print(f"\nJSON written to {args.json}")
+    if any(r.get("verdict") == "OOM_FIX_SIGNATURES_ABSENT" for r in results):
+        return 2
+    if any(r.get("verdict") in {"PARTIAL_OOM_FIX_SIGNATURES", "ERROR"} for r in results):
+        return 3
     return 0
 
 
