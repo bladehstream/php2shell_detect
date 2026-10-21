@@ -303,6 +303,6 @@ SHA-256 hashes for every file in this suite are recorded in SBOM.md. Verify
 before deployment:
 
     # PowerShell
-    Get-ChildItem php2shell-scanner -File | ForEach-Object { (Get-FileHash $_.FullName -Algorithm SHA256).Hash }
+    Get-ChildItem -File | Where-Object Name -match '\.(py|md)$' | ForEach-Object { (Get-FileHash $_.FullName -Algorithm SHA256).Hash }
     # bash
-    sha256sum php2shell-scanner/*
+    sha256sum *.py *.md

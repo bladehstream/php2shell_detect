@@ -152,7 +152,7 @@ Computed over the final state of each file. Re-verify after any local edit.
 | php_binary_check.py | 5970 | 41ffd098829e7f6a37153f592bad8b25f7be13e61f5ea49355736317e0ecc127 |
 | php_cve_audit_local.py | 11561 | 8e943e9b671239599fc81f32ed7e307a371544c2efbefee7c68e4c37e4ccbc26 |
 | php_cve_scanner.py | 20653 | 116ef1eba6063b421a5de6a4767403e8edc40f148c100eaba9bbd68b3fc31962 |
-| README.md | 14507 | ffeeefb74b47be97c067d25e4185dcba3e5446f3d430220f86fe3367c86e5c60 |
+| README.md | 14519 | eb60ea2eb75903842d0bd03c21d651bcd3e4db1efc04d2263b10a54bb9ad8b58 |
 | SBOM.md | self-referential; verify at deployment | |
 | test_mock_server.py | 1800 | b0e70bc3fa9591e77ae07494c5b27aa154deb8022592c61b8c35cfad92af50c8 |
 
@@ -160,14 +160,14 @@ Note: SBOM.md's own hash is self-referential and therefore left blank; every
 other file, including README.md, carries its final hash above. Compute the
 SBOM's hash separately at deployment:
 
-    (Get-FileHash php2shell-scanner\SBOM.md -Algorithm SHA256).Hash
+    (Get-FileHash SBOM.md -Algorithm SHA256).Hash
 
 Then verify the rest of the suite against section 8:
 
     # PowerShell
-    Get-ChildItem php2shell-scanner -File | ForEach-Object { "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name }
+    Get-ChildItem -File | Where-Object Name -match '\.(py|md)$' | ForEach-Object { "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name }
     # bash
-    sha256sum php2shell-scanner/*
+    sha256sum *.py *.md
 
 ## 9. Known limitations of this SBOM
 
